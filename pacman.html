@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>50 Bölümlü Pac-Man Oyunu</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #000, #1a1a2e);
+            font-family: 'Courier New', monospace;
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .game-header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .game-title {
+            font-size: 2.5em;
+            color: #ffff00;
+            text-shadow: 0 0 20px #ffff00;
+            margin-bottom: 10px;
+        }
+
+        .game-info {
+            display: flex;
+            gap: 30px;
+            margin-bottom: 20px;
+            font-size: 1.2em;
+        }
+
+        .info-item {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 10px 20px;
+            border-radius: 10px;
+            border: 2px solid #00ff00;
+        }
+
+        .game-canvas {
+            border: 3px solid #00ff00;
+            box-shadow: 0 0 30px rgba(0, 255, 0, 0.5);
+            background: #000;
+        }
+
+        .controls {
+            margin-top: 20px;
+            text-align: center;
+            font-size: 1.1em;
+        }
+
+        .level-complete, .game-over {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.9);
+            padding: 40px;
+            border: 3px solid #ffff00;
+            border-radius: 15px;
+            text-align: center;
+            z-index: 1000;
+            display: none;
+        }
+
+        .level-complete h2, .game-over h2 {
+            color: #ffff00;
+            font-size: 2em;
+            margin-bottom: 20px;
+        }
+
+        .level-complete button, .game-over button {
+            background: #00ff00;
+            color: #000;
+            border: none;
+            padding: 15px 30px;
+            font-size: 1.2em;
+            border-radius: 10px;
+            cursor: pointer;
+            margin: 10px;
+        }
+
+        .level-complete button:hover, .game-over button:hover {
+            background: #ffff00;
+        }
+
+        .power-pellet {
+            animation: pulse 0.5s infinite alternate;
+        }
+
+        @keyframes pulse {
+            from { opacity: 0.5; }
+            to { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="game-header">
+        <h1 class="game-title">PAC-MAN</h1>
+        <div class="game-info">
+            <div class="info-item">Skor: <span id="score">0</span></div>
+            <div class="info-item">Bölüm: <span id="level">1</span>/50</div>
+            <div class="info-item">Can: <span id="lives">3</span></div>
+        </div>
+    </div>
+
+    <canvas id="gameCanvas" class="game-canvas" width="800" height="600"></canvas>
+
+    <div class="controls">
+        <p>Ok tuşları ile hareket edin • Büyük noktaları yiyerek hayaletleri yenilebilir hale getirin</p>
+    </div>
+
+    <div class="level-complete" id="levelComplete">
+        <h2>Bölüm Tamamlandı!</h2>
+        <p>Bölüm <span id="completedLevel"></span> başarıyla tamamlandı!</p>
+        <p>Bonus: <span id="levelBonus"></span> puan</p>
+        <button onclick="nextLevel()">Sonraki Bölüm</button>
+    </div>
+
+    <div class="game-over" id="gameOver">
+        <h2>Oyun Bitti!</h2>
+        <p>Final Skorunuz: <span id="finalScore"></span></p>
+        <p>Ulaştığınız Bölüm: <span id="reachedLevel"></span>/50</p>
+        <button onclick="restartGame()">Yeniden Başla</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Oyun değişkenleri
+        let score = 0;
+        let level = 1;
+        let lives = 3;
+        let gameState = 'playing'; // playing, paused, gameOver, levelComplete
+        let powerPelletActive = false;
+        let powerPelletTimer = 0;
+
+        // Pac-Man
+        const pacman = {
+            x: 50,
+            y: 50,
+            size: 15,
+            direction: 'right',
+            nextDirection: 'right',
+            speed: 2,
+            mouthAngle: 0
+        };
+
+        // Hayaletler
+        const ghosts = [
+            { x: 700, y: 500, color: '#ff0000', direction: 'up', speed: 1.5, scared: false, scaredTimer: 0 },
+            { x: 720, y: 520, color: '#ffb8de', direction: 'down', speed: 1.5, scared: false, scaredTimer: 0 },
+            { x: 740, y: 540, color: '#00ffff', direction: 'left', speed: 1.5, scared: false, scaredTimer: 0 },
+            { x: 100, y: 500, color: '#ffb852', direction: 'right', speed: 1.5, scared: false, scaredTimer: 0 }
+        ];
+
+        // Labirent - her seviye için farklı labirent oluşturulacak
+        let maze = [];
+        let pellets = [];
+        let powerPellets = [];
+
+        // Labirent oluşturma fonksiyonu
+        function generateMaze(levelNum) {
+            maze = [];
+            pellets = [];
+            powerPellets = [];
+            
+            const width = 40;
+            const height = 30;
+            
+            // Temel labirent yapısı
+            for (let y = 0; y < height; y++) {
+                maze[y] = [];
+                for (let x = 0; x < width; x++) {
+                    // Dış duvarlar
+                    if (x === 0 || x === width - 1 || y === 0 || y === height - 1) {
+                        maze[y][x] = 1; // Duvar
+                    }
+                    // Seviyeye göre karmaşıklık
+                    else if (levelNum <= 10) {
+                        // Basit seviyeler
+                        maze[y][x] = (Math.random() < 0.3) ? 1 : 0;
+                    } else if (levelNum <= 25) {
+                        // Orta seviyeler - daha fazla duvar
+                        maze[y][x] = (Math.random() < 0.4) ? 1 : 0;
+                    } else {
+                        // Zor seviyeler - çok karmaşık
+                        maze[y][x] = (Math.random() < 0.5) ? 1 : 0;
+                    }
+                }
+            }
+            
+            // Başlangıç alanını temizle (Pac-Man için sol üst köşe)
+            for (let y = 1; y < 5; y++) {
+                for (let x = 1; x < 8; x++) {
+                    maze[y][x] = 0;
+                }
+            }
+            
+            // Hayaletler için sağ alt köşeyi temizle
+            for (let y = height - 6; y < height - 1; y++) {
+                for (let x = width - 10; x < width - 1; x++) {
+                    maze[y][x] = 0;
+                }
+            }
+            
+            // Pelletleri yerleştir
+            for (let y = 1; y < height - 1; y++) {
+                for (let x = 1; x < width - 1; x++) {
+                    if (maze[y][x] === 0) {
+                        // Normal pellet
+                        if (Math.random() < 0.8) {
+                            pellets.push({ x: x * 20 + 10, y: y * 20 + 10 });
+                        }
+                        // Power pellet (köşelerde ve bazı özel yerlerde)
+                        else if ((x < 5 || x > width - 6) && (y < 5 || y > height - 6)) {
+                            powerPellets.push({ x: x * 20 + 10, y: y * 20 + 10 });
+                        }
+                    }
+                }
+            }
+            
+            // En az 4 power pellet garantisi
+            while (powerPellets.length < 4) {
+                const x = Math.floor(Math.random() * (width - 2)) + 1;
+                const y = Math.floor(Math.random() * (height - 2)) + 1;
+                if (maze[y][x] === 0) {
+                    powerPellets.push({ x: x * 20 + 10, y: y * 20 + 10 });
+                }
+            }
+        }
+
+        // Çarpışma kontrolü
+        function checkWallCollision(x, y) {
+            const gridX = Math.floor(x / 20);
+            const gridY = Math.floor(y / 20);
+            return maze[gridY] && maze[gridY][gridX] === 1;
+        }
+
+        // Pac-Man hareketi
+        function movePacman() {
+            let newX = pacman.x;
+            let newY = pacman.y;
+            
+            // Yön değiştirme kontrolü
+            if (pacman.nextDirection !== pacman.direction) {
+                let testX = pacman.x;
+                let testY = pacman.y;
+                
+                switch (pacman.nextDirection) {
+                    case 'up': testY -= pacman.speed; break;
+                    case 'down': testY += pacman.speed; break;
+                    case 'left': testX -= pacman.speed; break;
+                    case 'right': testX += pacman.speed; break;
+                }
+                
+                if (!checkWallCollision(testX, testY)) {
+                    pacman.direction = pacman.nextDirection;
+                }
+            }
+            
+            // Hareket
+            switch (pacman.direction) {
+                case 'up': newY -= pacman.speed; break;
+                case 'down': newY += pacman.speed; break;
+                case 'left': newX -= pacman.speed; break;
+                case 'right': newX += pacman.speed; break;
+            }
+            
+            // Duvar kontrolü
+            if (!checkWallCollision(newX, newY)) {
+                pacman.x = newX;
+                pacman.y = newY;
+            }
+            
+            // Ekran sınırları (tünel efekti)
+            if (pacman.x < 0) pacman.x = canvas.width;
+            if (pacman.x > canvas.width) pacman.x = 0;
+            
+            // Ağız animasyonu
+            pacman.mouthAngle += 0.3;
+        }
+
+        // Hayalet hareketi
+        function moveGhosts() {
+            ghosts.forEach(ghost => {
+                // Korkmuş durumda hız azalır
+                const speed = ghost.scared ? ghost.speed * 0.5 : ghost.speed;
+                
+                let newX = ghost.x;
+                let newY = ghost.y;
+                
+                // Yön değiştirme (rastgele veya Pac-Man'i takip etme)
+                if (Math.random() < 0.02 || checkWallCollision(ghost.x, ghost.y)) {
+                    const directions = ['up', 'down', 'left', 'right'];
+                    let validDirections = [];
+                    
+                    directions.forEach(dir => {
+                        let testX = ghost.x;
+                        let testY = ghost.y;
+                        
+                        switch (dir) {
+                            case 'up': testY -= speed; break;
+                            case 'down': testY += speed; break;
+                            case 'left': testX -= speed; break;
+                            case 'right': testX += speed; break;
+                        }
+                        
+                        if (!checkWallCollision(testX, testY)) {
+                            validDirections.push(dir);
+                        }
+                    });
+                    
+                    if (validDirections.length > 0) {
+                        if (!ghost.scared && Math.random() < 0.7) {
+                            // Pac-Man'i takip et
+                            let bestDirection = validDirections[0];
+                            let minDistance = Infinity;
+                            
+                            validDirections.forEach(dir => {
+                                let testX = ghost.x;
+                                let testY = ghost.y;
+                                
+                                switch (dir) {
+                                    case 'up': testY -= speed; break;
+                                    case 'down': testY += speed; break;
+                                    case 'left': testX -= speed; break;
+                                    case 'right': testX += speed; break;
+                                }
+                                
+                                const distance = Math.sqrt((testX - pacman.x) ** 2 + (testY - pacman.y) ** 2);
+                                if (distance < minDistance) {
+                                    minDistance = distance;
+                                    bestDirection = dir;
+                                }
+                            });
+                            
+                            ghost.direction = bestDirection;
+                        } else {
+                            // Rastgele yön
+                            ghost.direction = validDirections[Math.floor(Math.random() * validDirections.length)];
+                        }
+                    }
+                }
+                
+                // Hareket et
+                switch (ghost.direction) {
+                    case 'up': newY -= speed; break;
+                    case 'down': newY += speed; break;
+                    case 'left': newX -= speed; break;
+                    case 'right': newX += speed; break;
+                }
+                
+                if (!checkWallCollision(newX, newY)) {
+                    ghost.x = newX;
+                    ghost.y = newY;
+                }
+                
+                // Korkmuş timer
+                if (ghost.scared) {
+                    ghost.scaredTimer--;
+                    if (ghost.scaredTimer <= 0) {
+                        ghost.scared = false;
+                    }
+                }
+            });
+        }
+
+        // Çarpışma kontrolleri
+        function checkCollisions() {
+            // Pellet toplama
+            pellets = pellets.filter(pellet => {
+                const distance = Math.sqrt((pacman.x - pellet.x) ** 2 + (pacman.y - pellet.y) ** 2);
+                if (distance < 15) {
+                    score += 10;
+                    return false;
+                }
+                return true;
+            });
+            
+            // Power pellet toplama
+            powerPellets = powerPellets.filter(pellet => {
+                const distance = Math.sqrt((pacman.x - pellet.x) ** 2 + (pacman.y - pellet.y) ** 2);
+                if (distance < 15) {
+                    score += 50;
+                    powerPelletActive = true;
+                    powerPelletTimer = 300; // 5 saniye
+                    
+                    // Tüm hayaletleri korkut
+                    ghosts.forEach(ghost => {
+                        ghost.scared = true;
+                        ghost.scaredTimer = 300;
+                    });
+                    
+                    return false;
+                }
+                return true;
+            });
+            
+            // Hayalet çarpışması
+            ghosts.forEach((ghost, index) => {
+                const distance = Math.sqrt((pacman.x - ghost.x) ** 2 + (pacman.y - ghost.y) ** 2);
+                if (distance < 25) {
+                    if (ghost.scared) {
+                        // Hayaleti ye
+                        score += 200;
+                        ghost.x = 400;
+                        ghost.y = 280;
+                        ghost.scared = false;
+                        ghost.scaredTimer = 0;
+                    } else {
+                        // Can kaybı
+                        lives--;
+                        if (lives <= 0) {
+                            gameState = 'gameOver';
+                        } else {
+                            // Pozisyonları sıfırla - güvenli mesafede
+                            pacman.x = 50;
+                            pacman.y = 50;
+                            ghosts.forEach((g, i) => {
+                                g.x = 700 + i * 20;
+                                g.y = 500 + i * 20;
+                            });
+                        }
+                    }
+                }
+            });
+            
+            // Seviye tamamlama
+            if (pellets.length === 0 && powerPellets.length === 0) {
+                gameState = 'levelComplete';
+            }
+        }
+
+        // Power pellet timer
+        function updatePowerPellet() {
+            if (powerPelletActive) {
+                powerPelletTimer--;
+                if (powerPelletTimer <= 0) {
+                    powerPelletActive = false;
+                    ghosts.forEach(ghost => {
+                        ghost.scared = false;
+                        ghost.scaredTimer = 0;
+                    });
+                }
+            }
+        }
+
+        // Çizim fonksiyonları
+        function drawMaze() {
+            ctx.fillStyle = '#0000ff';
+            for (let y = 0; y < maze.length; y++) {
+                for (let x = 0; x < maze[y].length; x++) {
+                    if (maze[y][x] === 1) {
+                        ctx.fillRect(x * 20, y * 20, 20, 20);
+                    }
+                }
+            }
+        }
+
+        function drawPellets() {
+            // Normal pellets
+            ctx.fillStyle = '#ffff00';
+            pellets.forEach(pellet => {
+                ctx.beginPath();
+                ctx.arc(pellet.x, pellet.y, 3, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            
+            // Power pellets
+            ctx.fillStyle = powerPelletActive ? '#ff00ff' : '#ffff00';
+            powerPellets.forEach(pellet => {
+                ctx.beginPath();
+                ctx.arc(pellet.x, pellet.y, 8, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        function drawPacman() {
+            ctx.fillStyle = '#ffff00';
+            ctx.beginPath();
+            
+            const startAngle = pacman.mouthAngle % (Math.PI * 2);
+            const endAngle = (pacman.mouthAngle + Math.PI * 1.5) % (Math.PI * 2);
+            
+            ctx.arc(pacman.x, pacman.y, pacman.size, startAngle, endAngle);
+            ctx.lineTo(pacman.x, pacman.y);
+            ctx.fill();
+        }
+
+        function drawGhosts() {
+            ghosts.forEach(ghost => {
+                ctx.fillStyle = ghost.scared ? '#0000ff' : ghost.color;
+                
+                // Hayalet gövdesi
+                ctx.beginPath();
+                ctx.arc(ghost.x, ghost.y - 5, 12, Math.PI, 0, false);
+                ctx.rect(ghost.x - 12, ghost.y - 5, 24, 15);
+                ctx.fill();
+                
+                // Hayalet alt kısmı (dalgalı)
+                ctx.beginPath();
+                ctx.moveTo(ghost.x - 12, ghost.y + 10);
+                for (let i = 0; i < 6; i++) {
+                    ctx.lineTo(ghost.x - 12 + i * 4, ghost.y + 10 + (i % 2 === 0 ? -5 : 0));
+                }
+                ctx.lineTo(ghost.x + 12, ghost.y + 10);
+                ctx.lineTo(ghost.x + 12, ghost.y - 5);
+                ctx.lineTo(ghost.x - 12, ghost.y - 5);
+                ctx.fill();
+                
+                // Gözler
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(ghost.x - 8, ghost.y - 10, 4, 6);
+                ctx.fillRect(ghost.x + 4, ghost.y - 10, 4, 6);
+                
+                ctx.fillStyle = '#000';
+                ctx.fillRect(ghost.x - 7, ghost.y - 9, 2, 4);
+                ctx.fillRect(ghost.x + 5, ghost.y - 9, 2, 4);
+            });
+        }
+
+        function drawUI() {
+            document.getElementById('score').textContent = score;
+            document.getElementById('level').textContent = level;
+            document.getElementById('lives').textContent = lives;
+        }
+
+        // Oyun döngüsü
+        function gameLoop() {
+            if (gameState === 'playing') {
+                // Temizle
+                ctx.fillStyle = '#000';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Güncelle
+                movePacman();
+                moveGhosts();
+                checkCollisions();
+                updatePowerPellet();
+                
+                // Çiz
+                drawMaze();
+                drawPellets();
+                drawPacman();
+                drawGhosts();
+                drawUI();
+            } else if (gameState === 'levelComplete') {
+                showLevelComplete();
+            } else if (gameState === 'gameOver') {
+                showGameOver();
+            }
+            
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Seviye tamamlama
+        function showLevelComplete() {
+            const bonus = level * 100;
+            score += bonus;
+            
+            document.getElementById('completedLevel').textContent = level;
+            document.getElementById('levelBonus').textContent = bonus;
+            document.getElementById('levelComplete').style.display = 'block';
+        }
+
+        function nextLevel() {
+            if (level < 50) {
+                level++;
+                pacman.speed += 0.1; // Her seviyede biraz daha hızlı
+                ghosts.forEach(ghost => ghost.speed += 0.05);
+                generateMaze(level);
+                
+                // Pozisyonları sıfırla - güvenli mesafede
+                pacman.x = 50;
+                pacman.y = 50;
+                ghosts.forEach((ghost, index) => {
+                    ghost.x = 700 + index * 20;
+                    ghost.y = 500 + index * 20;
+                    ghost.scared = false;
+                    ghost.scaredTimer = 0;
+                });
+                
+                powerPelletActive = false;
+                powerPelletTimer = 0;
+                gameState = 'playing';
+                document.getElementById('levelComplete').style.display = 'none';
+            } else {
+                // Oyun tamamlandı!
+                alert('Tebrikler! Tüm 50 bölümü tamamladınız!');
+                restartGame();
+            }
+        }
+
+        // Oyun bitti
+        function showGameOver() {
+            document.getElementById('finalScore').textContent = score;
+            document.getElementById('reachedLevel').textContent = level;
+            document.getElementById('gameOver').style.display = 'block';
+        }
+
+        function restartGame() {
+            score = 0;
+            level = 1;
+            lives = 3;
+            pacman.x = 50;
+            pacman.y = 50;
+            pacman.speed = 2;
+            
+            ghosts.forEach((ghost, index) => {
+                ghost.x = 700 + index * 20;
+                ghost.y = 500 + index * 20;
+                ghost.speed = 1.5;
+                ghost.scared = false;
+                ghost.scaredTimer = 0;
+            });
+            
+            generateMaze(1);
+            powerPelletActive = false;
+            powerPelletTimer = 0;
+            gameState = 'playing';
+            
+            document.getElementById('gameOver').style.display = 'none';
+            document.getElementById('levelComplete').style.display = 'none';
+        }
+
+        // Klavye kontrolleri
+        document.addEventListener('keydown', (e) => {
+            switch (e.key) {
+                case 'ArrowUp':
+                    pacman.nextDirection = 'up';
+                    e.preventDefault();
+                    break;
+                case 'ArrowDown':
+                    pacman.nextDirection = 'down';
+                    e.preventDefault();
+                    break;
+                case 'ArrowLeft':
+                    pacman.nextDirection = 'left';
+                    e.preventDefault();
+                    break;
+                case 'ArrowRight':
+                    pacman.nextDirection = 'right';
+                    e.preventDefault();
+                    break;
+                case ' ':
+                    if (gameState === 'playing') {
+                        gameState = 'paused';
+                    } else if (gameState === 'paused') {
+                        gameState = 'playing';
+                    }
+                    e.preventDefault();
+                    break;
+            }
+        });
+
+        // Oyunu başlat
+        generateMaze(1);
+        gameLoop();
+    </script>
+</body>
+</html>
